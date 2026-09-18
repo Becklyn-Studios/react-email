@@ -127,7 +127,11 @@ export const exportTemplates = async (
       await build({
         bundle: true,
         entryPoints: batch,
-        external: ['css-tree', ...(userConfig.esbuild?.external ?? [])],
+        // css-tree is NOT external: the ESM output points at its self-contained dist
+        // bundle, which bundles cleanly, and leaving it external makes the emitted template
+        // require it from the output directory, where a consumer's node_modules cannot
+        // resolve a transitive dependency of this package.
+        external: userConfig.esbuild?.external,
         format: 'cjs',
         jsx: 'automatic',
         loader: { '.js': 'jsx' },
