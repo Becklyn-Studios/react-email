@@ -2,7 +2,9 @@
  * @type {import('next').NextConfig}
  */
 const nextConfig = {
-  serverExternalPackages: ['esbuild'],
+  // jiti transpiles the user's react-email.config.* at runtime and does not survive
+  // being bundled, the same way esbuild does not.
+  serverExternalPackages: ['esbuild', 'jiti'],
   // Noticed an issue with typescript transpilation when going from Next 14.1.1 to 14.1.2
   // and I narrowed that down into this PR https://github.com/vercel/next.js/pull/62005
   //

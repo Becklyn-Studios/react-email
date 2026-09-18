@@ -58,7 +58,11 @@ export const getEmailComponent = async (
   | { error: ErrorObject }
 > => {
   let outputFiles: OutputFile[];
-  const userConfig = await loadUserConfig();
+  // The preview runs as its own Next server, so process.cwd() is this package rather
+  // than the user's project. The CLI passes their location through this variable.
+  const userConfig = await loadUserConfig(
+    process.env.REACT_EMAIL_INTERNAL_USER_PROJECT_LOCATION,
+  );
   try {
     const buildData = await build({
       bundle: true,
