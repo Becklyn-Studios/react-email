@@ -50,4 +50,11 @@ export default defineConfig([
       neverBundle: [/^react($|\/)/, /^react-dom($|\/)/],
     },
   },
+  // Kept out of the main entry so that `jiti` never reaches a bundled template.
+  {
+    dts: true,
+    entry: ['./src/config.ts'],
+    format: ['esm', 'cjs'],
+    outDir: 'dist',
+  },
 ]);
