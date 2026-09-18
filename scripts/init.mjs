@@ -208,7 +208,15 @@ await writeIfAbsent(
         skipLibCheck: true,
         isolatedModules: true,
       },
-      include: [`${sourceDir}/**/*.ts`, `${sourceDir}/**/*.tsx`, `${sourceDir}/**/*.d.ts`],
+      // react-email.config.ts has to be in the project: left out, an editor opens it with
+      // default settings, where moduleResolution ignores exports maps and 'react-email/config'
+      // appears unresolvable.
+      include: [
+        'react-email.config.ts',
+        `${sourceDir}/**/*.ts`,
+        `${sourceDir}/**/*.tsx`,
+        `${sourceDir}/**/*.d.ts`,
+      ],
     },
     null,
     4,
