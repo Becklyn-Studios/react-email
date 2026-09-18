@@ -12,7 +12,8 @@
  *
  * Every answer can be given up front, which also makes it usable without a terminal:
  *
- *     node tools/react-email/scripts/init.mjs --templates=shared/emails --source=src --scripts
+ *     node tools/react-email/scripts/init.mjs --templates=shared/emails --source=src \
+ *       --output=html --scripts
  */
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -31,6 +32,14 @@ const LINKED_PACKAGES = {
 };
 
 const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
+
+/** Appends an entry to a .gitignore, creating it when absent and never duplicating. */
+const ignoreInGit = async (file, entry) => {
+  const existing = existsSync(file) ? await readFile(file, 'utf8') : '';
+  if (existing.split('\n').some((line) => line.trim() === entry)) return;
+  await writeFile(file, existing && !existing.endsWith('\n') ? `${existing}\n${entry}\n` : `${existing}${entry}\n`);
+  console.log(`✔ added ${entry} to ${path.relative(CONSUMER_ROOT, file)}`);
+};
 const writeJson = async (file, value) =>
   writeFile(file, `${JSON.stringify(value, null, indentOf(file) ?? 2)}\n`);
 
@@ -119,6 +128,8 @@ console.log(`\n✔ linked ${Object.keys(LINKED_PACKAGES).join(', ')} into ${temp
 const sourceDir = await ask('Which directory inside it holds the templates?', 'src', 'source');
 await mkdir(path.join(templatesRoot, sourceDir), { recursive: true });
 
+const outputDir = await ask('Where should the exported HTML go?', 'html', 'output');
+
 const configPath = path.join(templatesRoot, 'react-email.config.ts');
 if (existsSync(configPath)) {
   console.log('• react-email.config.ts already exists, left alone');
@@ -160,6 +171,8 @@ declare module "*.module.scss" {
   console.log(`✔ wrote ${path.join(sourceDir, 'scss-modules.d.ts')}`);
 }
 
+await ignoreInGit(path.join(templatesRoot, '.gitignore'), `/${outputDir}`);
+
 const buildScript =
   `cd ${SUBMODULE_REL} && corepack pnpm install --ignore-scripts && ` +
   `corepack pnpm exec turbo run build ${Object.keys(LINKED_PACKAGES)
@@ -170,7 +183,8 @@ const templatesScripts = (templatesManifest.scripts ??= {});
 for (const [name, command] of Object.entries({
   dev: `email dev --dir ${sourceDir}`,
   build: `email build --dir ${sourceDir}`,
-  export: `email export --dir ${sourceDir}`,
+  // --outDir can still be overridden per call; the last one given wins.
+  export: `email export --dir ${sourceDir} --outDir ${outputDir}`,
 })) {
   templatesScripts[name] ??= command;
 }

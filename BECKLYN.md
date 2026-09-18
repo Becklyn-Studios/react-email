@@ -55,6 +55,20 @@ pnpm email:dev       # preview on :3000
 `@react-email/ui` has to be linked as well as `react-email`: the CLI resolves it from your
 project and refuses to start unless its version matches `react-email`'s exactly.
 
+### Overriding the export directory
+
+The init script bakes `--outDir` into the `export` script, and a later `--outDir` wins, so
+it can still be changed per call — but pass it **without** a `--` separator:
+
+```bash
+pnpm --filter <templates package> export --outDir dist    # works
+pnpm --filter <templates package> export -- --outDir dist # fails
+```
+
+pnpm forwards the separator verbatim, and the CLI then rejects it with
+`too many arguments for 'export'`. Note this is the opposite of `email:dev`, which goes
+through turbo and *does* need the separator: `pnpm email:dev -- --port=3010`.
+
 ## Writing templates
 
 The stylesheet sits next to the template and is imported directly:
