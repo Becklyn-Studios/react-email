@@ -46,7 +46,12 @@ shared/emails/src/welcome.module.scss
 shared/emails/src/scss-modules.d.ts
 ```
 
-Finally it offers to add `email:dev` / `email:build` to your root `package.json`.
+The `dev`, `build`, `export` and `typecheck` scripts each get a `pre*` hook that rebuilds
+the fork, so it cannot go stale when the submodule moves to another branch. turbo caches the
+build, so those hooks cost about a tenth of a second after the first run.
+
+Finally it offers to add `email:dev` / `email:build` to your root `package.json`. Decline it
+and the `pre*` hooks inline the build command instead, so the package still stands alone.
 
 Point it at a package that already exists and it only adds the links and any missing
 scripts. Nothing is ever overwritten, so it is safe to re-run.

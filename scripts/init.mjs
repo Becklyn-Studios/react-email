@@ -120,6 +120,11 @@ console.log(`Setting up ${path.basename(SUBMODULE_ROOT)} from ${SUBMODULE_REL}\n
 const templatesDir = await ask('Where should your email templates live?', 'shared/emails', 'templates');
 const sourceDir = await ask('Which directory inside it holds the templates?', 'src', 'source');
 const outputDir = await ask('Where should the exported HTML go?', 'html', 'output');
+const wiredRootScripts = await confirm(
+  'Add email:dev and email:build to the root package.json?',
+  true,
+  'scripts',
+);
 
 const templatesRoot = path.resolve(CONSUMER_ROOT, templatesDir);
 const manifestPath = path.join(templatesRoot, 'package.json');
@@ -131,11 +136,28 @@ const links = Object.fromEntries(
   ]),
 );
 
+// The same command from two different working directories: root scripts run at the repo
+// root, package scripts run inside the package.
+const buildFrom = (fromDir) =>
+  `cd ${fromDir} && corepack pnpm install --ignore-scripts && ` +
+  `corepack pnpm exec turbo run build ${Object.keys(LINKED_PACKAGES)
+    .map((name) => `--filter=${name}`)
+    .join(' ')}`;
+const buildScript = buildFrom(SUBMODULE_REL);
+
+// Rebuilding the fork before every command keeps it from going stale when the submodule
+// moves to another branch. turbo caches it, so a repeat run costs about a tenth of a second.
+const rebuild = wiredRootScripts ? 'pnpm -w email:build' : buildFrom(toSubmodule);
+
 const scripts = {
+  predev: rebuild,
   dev: `email dev --dir ${sourceDir}`,
+  prebuild: rebuild,
   build: `email build --dir ${sourceDir}`,
+  preexport: rebuild,
   // --outDir can still be overridden per call; the last one given wins.
   export: `email export --dir ${sourceDir} --outDir ${outputDir}`,
+  pretypecheck: rebuild,
   typecheck: 'tsc --noEmit',
 };
 
@@ -281,18 +303,6 @@ export default function Welcome({ name = "World" }: WelcomeProps) {
 `,
 );
 
-const buildScript =
-  `cd ${SUBMODULE_REL} && corepack pnpm install --ignore-scripts && ` +
-  `corepack pnpm exec turbo run build ${Object.keys(LINKED_PACKAGES)
-    .map((name) => `--filter=${name}`)
-    .join(' ')}`;
-
-const wiredRootScripts = await confirm(
-  '\nAdd email:dev and email:build to the root package.json?',
-  true,
-  'scripts',
-);
-
 if (wiredRootScripts) {
   const rootManifestPath = path.join(CONSUMER_ROOT, 'package.json');
   const raw = await readFile(rootManifestPath, 'utf8');
@@ -316,12 +326,13 @@ Add ${templatesDir} to your workspace if it is not covered yet, then:
   pnpm install
 ${
   wiredRootScripts
-    ? '  pnpm email:build     # first run compiles the fork, later runs are cached\n  pnpm email:dev       # preview on :3000'
-    : `  ${buildScript}\n  pnpm --filter ${manifest.name} dev`
+    ? '  pnpm email:dev       # preview on :3000'
+    : `  pnpm --filter ${manifest.name} dev`
 }
 
-Hook that build into ${templatesDir}'s pre* scripts if you want it to stay current
-automatically when the submodule moves to another branch.
+The fork is rebuilt by ${templatesDir}'s pre* scripts, so it never goes stale when the
+submodule moves to another branch. The first build takes about half a minute; turbo caches
+every one after that.
 `);
 
 rl?.close();
