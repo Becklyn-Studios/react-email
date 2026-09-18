@@ -1,19 +1,20 @@
 #!/usr/bin/env node
 /**
- * Wires this fork into the repository that includes it as a git submodule.
+ * Wires this fork into the repository that includes it as a git submodule, scaffolding a
+ * templates package if there is not one yet.
  *
  * Run it from the consuming repository's root, after adding the submodule:
  *
  *     node tools/react-email/scripts/init.mjs
  *
- * It links the fork's packages into the templates package, writes the config and type
- * declaration the SCSS support needs, and optionally adds the email scripts to the root
- * package.json. Plain Node with no dependencies, so it works before anything is installed.
- *
  * Every answer can be given up front, which also makes it usable without a terminal:
  *
  *     node tools/react-email/scripts/init.mjs --templates=shared/emails --source=src \
  *       --output=html --scripts
+ *
+ * Nothing is overwritten: files that already exist are left alone, so it is safe to re-run
+ * after moving the submodule or adding it to another package. Plain Node with no
+ * dependencies, so it works before anything is installed.
  */
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -31,25 +32,8 @@ const LINKED_PACKAGES = {
   '@react-email/scss-plugin': 'packages/scss-plugin',
 };
 
-const readJson = async (file) => JSON.parse(await readFile(file, 'utf8'));
-
-/** Appends an entry to a .gitignore, creating it when absent and never duplicating. */
-const ignoreInGit = async (file, entry) => {
-  const existing = existsSync(file) ? await readFile(file, 'utf8') : '';
-  if (existing.split('\n').some((line) => line.trim() === entry)) return;
-  await writeFile(file, existing && !existing.endsWith('\n') ? `${existing}\n${entry}\n` : `${existing}${entry}\n`);
-  console.log(`✔ added ${entry} to ${path.relative(CONSUMER_ROOT, file)}`);
-};
-const writeJson = async (file, value) =>
-  writeFile(file, `${JSON.stringify(value, null, indentOf(file) ?? 2)}\n`);
-
-/** Keeps a file's existing indentation instead of reformatting the whole thing. */
-const indentCache = new Map();
-const indentOf = (file) => indentCache.get(file);
-const rememberIndent = (file, raw) => {
-  const match = raw.match(/\n([ \t]+)"/);
-  indentCache.set(file, match ? match[1].length : 2);
-};
+// react-email peers ^18 || ^19; this keeps a fresh scaffold on the current major.
+const REACT_VERSION = '^19.0.0';
 
 // An empty relative path means the cwd is the submodule itself; '..' means it is outside.
 if (SUBMODULE_REL === '' || SUBMODULE_REL.startsWith('..')) {
@@ -91,52 +75,129 @@ const confirm = async (question, fallback, flag) => {
     console.log(`${question} ${fallback ? 'yes' : 'no'}`);
     return fallback;
   }
-  const answer = (await rl.question(`${question} [${fallback ? 'Y/n' : 'y/N'}] `)).trim().toLowerCase();
+  const answer = (await rl.question(`${question} [${fallback ? 'Y/n' : 'y/N'}] `))
+    .trim()
+    .toLowerCase();
   if (!answer) return fallback;
   return answer.startsWith('y');
 };
 
+const indents = new Map();
+const rememberIndent = (file, raw) => {
+  const match = raw.match(/\n([ \t]+)"/);
+  indents.set(file, match ? match[1].length : 2);
+};
+const writeJson = async (file, value) =>
+  writeFile(file, `${JSON.stringify(value, null, indents.get(file) ?? 4)}\n`);
+
+const relative = (file) => path.relative(CONSUMER_ROOT, file);
+
+/** Writes a file only when it is absent, so re-running never clobbers anyone's work. */
+const writeIfAbsent = async (file, contents) => {
+  if (existsSync(file)) {
+    console.log(`• ${relative(file)} already exists, left alone`);
+    return false;
+  }
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, contents);
+  console.log(`✔ wrote ${relative(file)}`);
+  return true;
+};
+
+/** Appends an entry to a .gitignore, creating it when absent and never duplicating. */
+const ignoreInGit = async (file, entries) => {
+  const existing = existsSync(file) ? await readFile(file, 'utf8') : '';
+  const lines = existing.split('\n').map((line) => line.trim());
+  const missing = entries.filter((entry) => !lines.includes(entry));
+  if (missing.length === 0) return;
+  const prefix = existing && !existing.endsWith('\n') ? `${existing}\n` : existing;
+  await writeFile(file, `${prefix}${missing.join('\n')}\n`);
+  console.log(`✔ added ${missing.join(', ')} to ${relative(file)}`);
+};
+
 console.log(`Setting up ${path.basename(SUBMODULE_ROOT)} from ${SUBMODULE_REL}\n`);
 
-const templatesDir = await ask('Where do your email templates live?', 'shared/emails', 'templates');
-const templatesRoot = path.resolve(CONSUMER_ROOT, templatesDir);
-const templatesManifestPath = path.join(templatesRoot, 'package.json');
-
-if (!existsSync(templatesManifestPath)) {
-  console.error(`\nNo package.json at ${path.join(templatesDir, 'package.json')}.`);
-  console.error('Create the templates package first, then run this again.');
-  rl?.close();
-  process.exit(1);
-}
-
-const templatesRaw = await readFile(templatesManifestPath, 'utf8');
-rememberIndent(templatesManifestPath, templatesRaw);
-const templatesManifest = JSON.parse(templatesRaw);
-
-// link: paths are resolved relative to the package that declares them.
-const toSubmodule = path.relative(templatesRoot, SUBMODULE_ROOT);
-templatesManifest.dependencies ??= {};
-for (const [name, location] of Object.entries(LINKED_PACKAGES)) {
-  templatesManifest.dependencies[name] = `link:${path.join(toSubmodule, location)}`;
-}
-templatesManifest.dependencies = Object.fromEntries(
-  Object.entries(templatesManifest.dependencies).sort(([a], [b]) => a.localeCompare(b)),
-);
-await writeJson(templatesManifestPath, templatesManifest);
-console.log(`\n✔ linked ${Object.keys(LINKED_PACKAGES).join(', ')} into ${templatesDir}`);
-
+const templatesDir = await ask('Where should your email templates live?', 'shared/emails', 'templates');
 const sourceDir = await ask('Which directory inside it holds the templates?', 'src', 'source');
-await mkdir(path.join(templatesRoot, sourceDir), { recursive: true });
-
 const outputDir = await ask('Where should the exported HTML go?', 'html', 'output');
 
-const configPath = path.join(templatesRoot, 'react-email.config.ts');
-if (existsSync(configPath)) {
-  console.log('• react-email.config.ts already exists, left alone');
+const templatesRoot = path.resolve(CONSUMER_ROOT, templatesDir);
+const manifestPath = path.join(templatesRoot, 'package.json');
+const toSubmodule = path.relative(templatesRoot, SUBMODULE_ROOT);
+const links = Object.fromEntries(
+  Object.entries(LINKED_PACKAGES).map(([name, location]) => [
+    name,
+    `link:${path.join(toSubmodule, location)}`,
+  ]),
+);
+
+const scripts = {
+  dev: `email dev --dir ${sourceDir}`,
+  build: `email build --dir ${sourceDir}`,
+  // --outDir can still be overridden per call; the last one given wins.
+  export: `email export --dir ${sourceDir} --outDir ${outputDir}`,
+  typecheck: 'tsc --noEmit',
+};
+
+console.log('');
+let manifest;
+if (existsSync(manifestPath)) {
+  const raw = await readFile(manifestPath, 'utf8');
+  rememberIndent(manifestPath, raw);
+  manifest = JSON.parse(raw);
+  manifest.dependencies = { ...manifest.dependencies, ...links };
+  manifest.scripts = { ...scripts, ...manifest.scripts };
+  console.log(`• ${relative(manifestPath)} already exists, added the links`);
 } else {
-  await writeFile(
-    configPath,
-    `import { scssModules } from "@react-email/scss-plugin";
+  manifest = {
+    name: path.basename(templatesRoot).replace(/[^a-z0-9-]/gi, '-').toLowerCase(),
+    version: '0.0.1',
+    private: true,
+    type: 'module',
+    scripts,
+    dependencies: { ...links, react: REACT_VERSION, 'react-dom': REACT_VERSION },
+    devDependencies: {
+      '@types/react': REACT_VERSION,
+      '@types/react-dom': REACT_VERSION,
+      typescript: '^5',
+    },
+  };
+  await mkdir(templatesRoot, { recursive: true });
+  console.log(`✔ wrote ${relative(manifestPath)}`);
+}
+manifest.dependencies = Object.fromEntries(
+  Object.entries(manifest.dependencies).sort(([a], [b]) => a.localeCompare(b)),
+);
+await writeJson(manifestPath, manifest);
+
+await writeIfAbsent(
+  path.join(templatesRoot, 'tsconfig.json'),
+  `${JSON.stringify(
+    {
+      compilerOptions: {
+        target: 'ES2022',
+        lib: ['ES2022', 'DOM'],
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        jsx: 'react-jsx',
+        strict: true,
+        noEmit: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        isolatedModules: true,
+      },
+      include: [`${sourceDir}/**/*.ts`, `${sourceDir}/**/*.tsx`, `${sourceDir}/**/*.d.ts`],
+    },
+    null,
+    4,
+  )}\n`,
+);
+
+await ignoreInGit(path.join(templatesRoot, '.gitignore'), ['/node_modules', `/${outputDir}`]);
+
+await writeIfAbsent(
+  path.join(templatesRoot, 'react-email.config.ts'),
+  `import { scssModules } from "@react-email/scss-plugin";
 import { defineConfig } from "react-email/config";
 
 export default defineConfig({
@@ -147,17 +208,11 @@ export default defineConfig({
     },
 });
 `,
-  );
-  console.log('✔ wrote react-email.config.ts');
-}
+);
 
-const declarationPath = path.join(templatesRoot, sourceDir, 'scss-modules.d.ts');
-if (existsSync(declarationPath)) {
-  console.log('• scss-modules.d.ts already exists, left alone');
-} else {
-  await writeFile(
-    declarationPath,
-    `/**
+await writeIfAbsent(
+  path.join(templatesRoot, sourceDir, 'scss-modules.d.ts'),
+  `/**
  * \`*.module.scss\` imports are turned into a module by @react-email/scss-plugin during
  * bundling: the compiled CSS plus a map of local class names to scoped ones.
  */
@@ -167,11 +222,64 @@ declare module "*.module.scss" {
     export default classes;
 }
 `,
-  );
-  console.log(`✔ wrote ${path.join(sourceDir, 'scss-modules.d.ts')}`);
+);
+
+await writeIfAbsent(
+  path.join(templatesRoot, sourceDir, 'welcome.module.scss'),
+  `$brand: #663399;
+$ink: #1f2933;
+
+.heading {
+    color: $brand;
+    font-size: 24px;
+    margin: 0 0 16px;
 }
 
-await ignoreInGit(path.join(templatesRoot, '.gitignore'), `/${outputDir}`);
+.body {
+    color: $ink;
+    font-size: 14px;
+    line-height: 24px;
+}
+
+// Not inlinable, so this lands in a <style> in <Head>. Many clients drop it.
+@media (max-width: 600px) {
+    .heading {
+        font-size: 20px;
+    }
+}
+`,
+);
+
+await writeIfAbsent(
+  path.join(templatesRoot, sourceDir, 'welcome.tsx'),
+  `import { Body, Container, Head, Heading, Html, Preview, Scss, Text } from "react-email";
+
+import styles, { css } from "./welcome.module.scss";
+
+export interface WelcomeProps {
+    name: string;
+}
+
+export default function Welcome({ name = "World" }: WelcomeProps) {
+    return (
+        <Scss sheets={[css]}>
+            <Html>
+                <Head />
+                <Preview>Hello {name}</Preview>
+                <Body>
+                    <Container>
+                        <Heading className={styles.heading}>Hello {name}</Heading>
+                        <Text className={styles.body}>
+                            Edit this template in ${path.join(templatesDir, sourceDir, 'welcome.tsx')}.
+                        </Text>
+                    </Container>
+                </Body>
+            </Html>
+        </Scss>
+    );
+}
+`,
+);
 
 const buildScript =
   `cd ${SUBMODULE_REL} && corepack pnpm install --ignore-scripts && ` +
@@ -179,56 +287,40 @@ const buildScript =
     .map((name) => `--filter=${name}`)
     .join(' ')}`;
 
-const templatesScripts = (templatesManifest.scripts ??= {});
-for (const [name, command] of Object.entries({
-  dev: `email dev --dir ${sourceDir}`,
-  build: `email build --dir ${sourceDir}`,
-  // --outDir can still be overridden per call; the last one given wins.
-  export: `email export --dir ${sourceDir} --outDir ${outputDir}`,
-})) {
-  templatesScripts[name] ??= command;
-}
-await writeJson(templatesManifestPath, templatesManifest);
-
 const wiredRootScripts = await confirm(
   '\nAdd email:dev and email:build to the root package.json?',
   true,
   'scripts',
 );
+
 if (wiredRootScripts) {
   const rootManifestPath = path.join(CONSUMER_ROOT, 'package.json');
-  const rootRaw = await readFile(rootManifestPath, 'utf8');
-  rememberIndent(rootManifestPath, rootRaw);
-  const rootManifest = JSON.parse(rootRaw);
+  const raw = await readFile(rootManifestPath, 'utf8');
+  rememberIndent(rootManifestPath, raw);
+  const rootManifest = JSON.parse(raw);
 
   // Only assume turbo when the consumer already uses it.
   const usesTurbo = existsSync(path.join(CONSUMER_ROOT, 'turbo.json'));
-  const templatesName = templatesManifest.name ?? path.basename(templatesRoot);
-
   rootManifest.scripts ??= {};
   rootManifest.scripts['email:dev'] = usesTurbo
-    ? `turbo run dev --filter=${templatesName}`
-    : `pnpm --filter ${templatesName} dev`;
+    ? `turbo run dev --filter=${manifest.name}`
+    : `pnpm --filter ${manifest.name} dev`;
   rootManifest.scripts['email:build'] = buildScript;
   await writeJson(rootManifestPath, rootManifest);
   console.log('✔ added email:dev and email:build to the root package.json');
-  console.log('\n  Run the preview with: pnpm email:dev');
-} else {
-  console.log('\n  Skipped. Build the fork yourself with:');
-  console.log(`    ${buildScript}`);
 }
 
 console.log(`
-Remaining, once you are happy with the manifests:
+Add ${templatesDir} to your workspace if it is not covered yet, then:
 
   pnpm install
 ${
   wiredRootScripts
     ? '  pnpm email:build     # first run compiles the fork, later runs are cached\n  pnpm email:dev       # preview on :3000'
-    : `  ${buildScript}\n  pnpm --filter ${templatesManifest.name ?? path.basename(templatesRoot)} dev`
+    : `  ${buildScript}\n  pnpm --filter ${manifest.name} dev`
 }
 
-Hook that build into the templates package's pre* scripts if you want it to stay current
+Hook that build into ${templatesDir}'s pre* scripts if you want it to stay current
 automatically when the submodule moves to another branch.
 `);
 

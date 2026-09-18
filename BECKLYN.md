@@ -33,10 +33,23 @@ cd tools/react-email && git checkout becklyn/6.9.5 && cd ../..
 node tools/react-email/scripts/init.mjs
 ```
 
-It asks where your templates live, links `react-email`, `@react-email/ui` and
-`@react-email/scss-plugin` into that package, writes `react-email.config.ts` and the
-`*.module.scss` type declaration, and offers to add `email:dev` / `email:build` to your root
-`package.json`. It is safe to re-run: existing files are left alone.
+It asks three things — where the templates should live, which directory inside holds them,
+and where exported HTML goes — then scaffolds the whole package:
+
+```
+shared/emails/package.json          scripts, the three linked packages, react
+shared/emails/tsconfig.json
+shared/emails/.gitignore            /node_modules and the output directory
+shared/emails/react-email.config.ts registers the SCSS plugin
+shared/emails/src/welcome.tsx       a first template, already using <Scss>
+shared/emails/src/welcome.module.scss
+shared/emails/src/scss-modules.d.ts
+```
+
+Finally it offers to add `email:dev` / `email:build` to your root `package.json`.
+
+Point it at a package that already exists and it only adds the links and any missing
+scripts. Nothing is ever overwritten, so it is safe to re-run.
 
 Every answer can be passed up front, which also makes it work without a terminal:
 
