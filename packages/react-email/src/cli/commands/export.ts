@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
 import type { Options } from '@react-email/render';
+import { loadUserConfig } from '../../config.js';
 import { type BuildFailure, build, stop } from 'esbuild';
 import { glob } from 'glob';
 import logSymbols from 'log-symbols';
@@ -118,6 +119,7 @@ export const exportTemplates = async (
   }
 
   const allTemplates = getEmailTemplatesFromDirectory(emailsDirectoryMetadata);
+  const userConfig = await loadUserConfig();
 
   try {
     for (let i = 0; i < allTemplates.length; i += BUILD_BATCH_SIZE) {
@@ -125,7 +127,7 @@ export const exportTemplates = async (
       await build({
         bundle: true,
         entryPoints: batch,
-        external: ['css-tree'],
+        external: ['css-tree', ...(userConfig.esbuild?.external ?? [])],
         format: 'cjs',
         jsx: 'automatic',
         loader: { '.js': 'jsx' },
@@ -133,7 +135,11 @@ export const exportTemplates = async (
         outExtension: { '.js': '.cjs' },
         outdir: pathToWhereEmailMarkupShouldBeDumped,
         platform: 'node',
-        plugins: [inlineCssLoader(), renderingUtilitiesExporter(batch)],
+        plugins: [
+          inlineCssLoader(),
+          renderingUtilitiesExporter(batch),
+          ...(userConfig.esbuild?.plugins ?? []),
+        ],
         write: true,
       });
       await stop();
